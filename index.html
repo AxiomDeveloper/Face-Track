@@ -12,7 +12,7 @@
 <body>
   <header>
     <h1>FaceSnap Tracker</h1>
-    <p>Live face tracking + tap-to-capture for iPhone</p>
+    <p>Live face tracking (Safari) + iOS Camera fallback</p>
   </header>
 
   <main>
@@ -23,12 +23,28 @@
       </div>
 
       <div class="controls">
-        <button id="startBtn">Start Camera</button>
+        <button id="startBtn">Start Live Camera</button>
         <button id="flipBtn" disabled>Flip Camera</button>
+        <button id="iosBtn" class="ghost">Open iOS Camera (Photo)</button>
+      </div>
+
+      <div class="controls">
         <button id="clearBtn" class="danger">Clear Temp Captures</button>
       </div>
 
-      <p class="hint">Tap any highlighted face box to capture a snapshot.</p>
+      <p class="hint" id="statusLine">Status: idle</p>
+      <p class="hint">
+        If Live Camera doesn’t work, you’re usually inside an in-app browser (X/IG/TikTok). Open in Safari.
+      </p>
+
+      <!-- iOS camera prompt fallback (photo only, not live stream) -->
+      <input
+        id="iosCapture"
+        type="file"
+        accept="image/*"
+        capture="user"
+        style="display:none"
+      />
     </section>
 
     <section class="gallery-card">
@@ -52,9 +68,14 @@
 
   <script type="module" src="app.js"></script>
   <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js').catch(console.error);
-    }
+    // IMPORTANT: if you keep a service worker, stale caches can break camera debugging.
+    // For now, we unregister any old SW to prevent “it still don’t work” due to stale JS.
+    (async () => {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const r of regs) await r.unregister();
+      }
+    })().catch(console.error);
   </script>
 </body>
 </html>
