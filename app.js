@@ -1,175 +1,244 @@
-import { fileSystem } from './data.js';
+import vision from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm';
 
-const DOM = {
-    output: document.getElementById('output'),
-    path: document.getElementById('current-path'),
-    builtCmd: document.getElementById('built-cmd'),
-    buttons: document.getElementById('context-buttons')
+const { FaceDetector, FilesetResolver } = vision;
+
+const STORAGE_KEY = 'facesnap-captures-v1';
+
+const dom = {
+  video: document.getElementById('camera'),
+  overlay: document.getElementById('overlay'),
+  wrap: document.getElementById('videoWrap'),
+  startBtn: document.getElementById('startBtn'),
+  flipBtn: document.getElementById('flipBtn'),
+  clearBtn: document.getElementById('clearBtn'),
+  gallery: document.getElementById('gallery'),
+  template: document.getElementById('captureTemplate')
 };
 
-let pwd = "/";
-let activeCmd = []; // Stores the command being built, e.g., ['mv', 'file.txt', 'target_dir']
+const ctx = dom.overlay.getContext('2d');
+let faceDetector;
+let stream;
+let running = false;
+let facingMode = 'user';
+let currentDetections = [];
+let rafId;
 
-function print(text, className = 'log-sys') {
-    const div = document.createElement('div');
-    div.className = className;
-    div.textContent = text;
-    DOM.output.appendChild(div);
-    DOM.output.scrollTop = DOM.output.scrollHeight;
+function loadCaptures() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
 }
 
-// Gets files/dirs in current path
-function getContents(typeFilter = null) {
-    const node = fileSystem[pwd];
-    if (!node || node.type !== 'dir') return [];
-    if (!typeFilter) return node.contents;
-    
-    // Filter by type (e.g., only show directories for 'cd')
-    return node.contents.filter(item => {
-        const itemPath = pwd === '/' ? `/${item}` : `${pwd}/${item}`;
-        return fileSystem[itemPath].type === typeFilter;
+function saveCaptures(captures) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(captures));
+}
+
+function renderGallery() {
+  const captures = loadCaptures();
+  dom.gallery.innerHTML = '';
+  captures.forEach((item, index) => {
+    const node = dom.template.content.firstElementChild.cloneNode(true);
+    const img = node.querySelector('img');
+    img.src = item;
+
+    node.querySelector('[data-action="save"]').addEventListener('click', () => saveOrShare(item, index));
+    node.querySelector('[data-action="delete"]').addEventListener('click', () => {
+      const next = loadCaptures();
+      next.splice(index, 1);
+      saveCaptures(next);
+      renderGallery();
     });
+
+    dom.gallery.appendChild(node);
+  });
 }
 
-function updateUI() {
-    DOM.path.textContent = pwd;
-    DOM.builtCmd.textContent = activeCmd.join(' ');
-    renderButtons();
+async function saveOrShare(dataUrl, index) {
+  const file = dataUrlToFile(dataUrl, `facesnap-${Date.now()}-${index}.jpg`);
+  const shareData = { files: [file], title: 'FaceSnap Capture' };
+
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share(shareData);
+      return;
+    }
+  } catch {
+    // Ignore and fallback to download.
+  }
+
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = file.name;
+  a.click();
 }
 
-function handleButtonPress(value, action = 'append') {
-    if (action === 'append') {
-        activeCmd.push(value);
-    } else if (action === 'cancel') {
-        activeCmd = [];
-    } else if (action === 'execute') {
-        executeCommand();
-    }
-    updateUI();
+function dataUrlToFile(dataUrl, fileName) {
+  const [meta, b64] = dataUrl.split(',');
+  const mime = meta.match(/:(.*?);/)[1];
+  const bytes = atob(b64);
+  const buffer = new Uint8Array(bytes.length);
+
+  for (let i = 0; i < bytes.length; i += 1) {
+    buffer[i] = bytes.charCodeAt(i);
+  }
+
+  return new File([buffer], fileName, { type: mime });
 }
 
-function renderButtons() {
-    DOM.buttons.innerHTML = '';
-    
-    // STATE 0: No command selected. Show Base Commands.
-    if (activeCmd.length === 0) {
-        createBtn('ls (List)', 'ls');
-        createBtn('cd (Open Dir)', 'cd');
-        createBtn('cat (Read File)', 'cat');
-        createBtn('mv (Move File)', 'mv');
-        return;
-    }
+async function initDetector() {
+  if (faceDetector) return;
 
-    const baseCmd = activeCmd[0];
+  const resolver = await FilesetResolver.forVisionTasks(
+    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
+  );
 
-    // STATE 1: 'ls' is selected. Ready to execute.
-    if (baseCmd === 'ls') {
-        createBtn('EXECUTE', '', 'execute', 'btn-exec');
-        createBtn('CANCEL', '', 'cancel', 'btn-cancel');
-        return;
-    }
-
-    // STATE 2: 'cd' is selected. Show available directories.
-    if (baseCmd === 'cd') {
-        if (activeCmd.length === 1) {
-            if (pwd !== '/') createBtn('.. (Go Back)', '..');
-            getContents('dir').forEach(dir => createBtn(dir, dir));
-            createBtn('CANCEL', '', 'cancel', 'btn-cancel');
-        } else {
-            createBtn('EXECUTE', '', 'execute', 'btn-exec');
-            createBtn('CANCEL', '', 'cancel', 'btn-cancel');
-        }
-        return;
-    }
-
-    // STATE 3: 'cat' is selected. Show available files.
-    if (baseCmd === 'cat') {
-        if (activeCmd.length === 1) {
-            getContents('file').forEach(file => createBtn(file, file));
-            createBtn('CANCEL', '', 'cancel', 'btn-cancel');
-        } else {
-            createBtn('EXECUTE', '', 'execute', 'btn-exec');
-            createBtn('CANCEL', '', 'cancel', 'btn-cancel');
-        }
-        return;
-    }
-
-    // STATE 4: 'mv' is selected. Needs File, then Needs Directory.
-    if (baseCmd === 'mv') {
-        if (activeCmd.length === 1) {
-            // Step 1: Pick file to move
-            getContents('file').forEach(file => createBtn(file, file));
-            createBtn('CANCEL', '', 'cancel', 'btn-cancel');
-        } else if (activeCmd.length === 2) {
-            // Step 2: Pick destination
-            const dirs = ['/secure_nodes/financial_crimes', '/secure_nodes/surveillance', '/secure_nodes/profiles'];
-            dirs.forEach(d => createBtn(`TO: ${d.split('/').pop()}`, d));
-            createBtn('CANCEL', '', 'cancel', 'btn-cancel');
-        } else {
-            createBtn('EXECUTE', '', 'execute', 'btn-exec');
-            createBtn('CANCEL', '', 'cancel', 'btn-cancel');
-        }
-        return;
-    }
+  faceDetector = await FaceDetector.createFromOptions(resolver, {
+    baseOptions: {
+      modelAssetPath:
+        'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite'
+    },
+    runningMode: 'VIDEO',
+    minDetectionConfidence: 0.55
+  });
 }
 
-function createBtn(label, value, action = 'append', cssClass = '') {
-    const btn = document.createElement('button');
-    btn.textContent = label;
-    if (cssClass) btn.className = cssClass;
-    btn.onclick = () => handleButtonPress(value, action);
-    DOM.buttons.appendChild(btn);
+async function startCamera() {
+  await initDetector();
+
+  stopCamera();
+
+  stream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: { ideal: facingMode },
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    },
+    audio: false
+  });
+
+  dom.video.srcObject = stream;
+  await dom.video.play();
+
+  resizeOverlay();
+  running = true;
+  dom.flipBtn.disabled = false;
+  detectLoop();
 }
 
-// --- COMMAND EXECUTION LOGIC ---
-function executeCommand() {
-    const cmdStr = activeCmd.join(' ');
-    print(`root@mi5:${pwd}$ ${cmdStr}`, 'log-cmd');
-    
-    const cmd = activeCmd[0];
-    const arg1 = activeCmd[1];
-    const arg2 = activeCmd[2];
-
-    activeCmd = []; // Reset builder immediately
-
-    if (cmd === 'ls') {
-        const contents = getContents();
-        if (contents.length === 0) print('(empty directory)', 'log-sys');
-        else print(contents.join('   '), 'log-data');
-    } 
-    else if (cmd === 'cd') {
-        if (arg1 === '..') {
-            const parts = pwd.split('/').filter(Boolean);
-            parts.pop();
-            pwd = parts.length === 0 ? '/' : '/' + parts.join('/');
-        } else {
-            pwd = pwd === '/' ? `/${arg1}` : `${pwd}/${arg1}`;
-        }
-    }
-    else if (cmd === 'cat') {
-        const targetPath = pwd === '/' ? `/${arg1}` : `${pwd}/${arg1}`;
-        print(fileSystem[targetPath].content, 'log-data');
-    }
-    else if (cmd === 'mv') {
-        const srcPath = pwd === '/' ? `/${arg1}` : `${pwd}/${arg1}`;
-        const destPath = arg2;
-        const filename = arg1;
-
-        // Move logic
-        fileSystem[`${destPath}/${filename}`] = fileSystem[srcPath];
-        delete fileSystem[srcPath];
-
-        // Update arrays
-        fileSystem[pwd].contents = fileSystem[pwd].contents.filter(f => f !== filename);
-        fileSystem[destPath].contents.push(filename);
-
-        print(`SECURE TRANSFER: ${filename} routed to ${destPath}`, 'log-success');
-    }
+function stopCamera() {
+  running = false;
+  if (rafId) cancelAnimationFrame(rafId);
+  if (stream) {
+    stream.getTracks().forEach((track) => track.stop());
+    stream = null;
+  }
 }
 
-// Boot Sequence
-print("INITIALIZING MI5 SECURE KERNEL...", "log-sys");
-setTimeout(() => {
-    print("Connection established. Awaiting input.", "log-success");
-    updateUI();
-}, 600);
+function resizeOverlay() {
+  const rect = dom.wrap.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  dom.overlay.width = Math.floor(rect.width * dpr);
+  dom.overlay.height = Math.floor(rect.height * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function drawFaces() {
+  const width = dom.wrap.clientWidth;
+  const height = dom.wrap.clientHeight;
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#4cc2ff';
+  ctx.fillStyle = 'rgba(76,194,255,.12)';
+
+  for (const face of currentDetections) {
+    const { originX, originY, width: w, height: h } = face.boundingBox;
+    ctx.fillRect(originX, originY, w, h);
+    ctx.strokeRect(originX, originY, w, h);
+  }
+}
+
+async function detectLoop() {
+  if (!running || !faceDetector || dom.video.readyState < 2) {
+    rafId = requestAnimationFrame(detectLoop);
+    return;
+  }
+
+  const result = faceDetector.detectForVideo(dom.video, performance.now());
+  currentDetections = result.detections || [];
+  drawFaces();
+
+  rafId = requestAnimationFrame(detectLoop);
+}
+
+function captureFace(face) {
+  const source = document.createElement('canvas');
+  source.width = dom.video.videoWidth;
+  source.height = dom.video.videoHeight;
+  const sctx = source.getContext('2d');
+  sctx.drawImage(dom.video, 0, 0, source.width, source.height);
+
+  const scaleX = source.width / dom.wrap.clientWidth;
+  const scaleY = source.height / dom.wrap.clientHeight;
+  const pad = 22;
+  const x = Math.max(0, (face.boundingBox.originX - pad) * scaleX);
+  const y = Math.max(0, (face.boundingBox.originY - pad) * scaleY);
+  const w = Math.min(source.width - x, (face.boundingBox.width + pad * 2) * scaleX);
+  const h = Math.min(source.height - y, (face.boundingBox.height + pad * 2) * scaleY);
+
+  const crop = document.createElement('canvas');
+  crop.width = Math.max(1, Math.round(w));
+  crop.height = Math.max(1, Math.round(h));
+  crop.getContext('2d').drawImage(source, x, y, w, h, 0, 0, crop.width, crop.height);
+
+  const dataUrl = crop.toDataURL('image/jpeg', 0.92);
+  const captures = loadCaptures();
+  captures.unshift(dataUrl);
+  saveCaptures(captures.slice(0, 40));
+  renderGallery();
+}
+
+function pickFaceAtPoint(clientX, clientY) {
+  const rect = dom.wrap.getBoundingClientRect();
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+
+  return currentDetections.find((face) => {
+    const b = face.boundingBox;
+    return x >= b.originX && x <= b.originX + b.width && y >= b.originY && y <= b.originY + b.height;
+  });
+}
+
+dom.startBtn.addEventListener('click', async () => {
+  try {
+    await startCamera();
+  } catch (error) {
+    alert(`Unable to start camera: ${error.message}`);
+  }
+});
+
+dom.flipBtn.addEventListener('click', async () => {
+  facingMode = facingMode === 'user' ? 'environment' : 'user';
+  try {
+    await startCamera();
+  } catch (error) {
+    alert(`Unable to flip camera: ${error.message}`);
+  }
+});
+
+dom.clearBtn.addEventListener('click', () => {
+  saveCaptures([]);
+  renderGallery();
+});
+
+dom.overlay.addEventListener('click', (event) => {
+  const hit = pickFaceAtPoint(event.clientX, event.clientY);
+  if (hit) captureFace(hit);
+});
+
+window.addEventListener('resize', resizeOverlay);
+window.addEventListener('beforeunload', stopCamera);
+
+renderGallery();
