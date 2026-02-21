@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>FaceSnap Tracker</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <h1>FaceSnap Tracker</h1>
+    <p>Live face tracking + tap-to-capture for iPhone</p>
+  </header>
+
+  <main>
+    <section class="camera-card">
+      <div class="video-wrap" id="videoWrap">
+        <video id="camera" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+      </div>
+
+      <div class="controls">
+        <button id="startBtn">Start Camera</button>
+        <button id="flipBtn" disabled>Flip Camera</button>
+        <button id="clearBtn" class="danger">Clear Temp Captures</button>
+      </div>
+
+      <p class="hint">Tap any highlighted face box to capture a snapshot.</p>
+    </section>
+
+    <section class="gallery-card">
+      <h2>Temp Captures</h2>
+      <p class="hint">Saved in this browser (localStorage). Use <strong>Save/Share</strong> on iPhone to add to Photos.</p>
+      <div id="gallery" class="gallery"></div>
+    </section>
+  </main>
+
+  <template id="captureTemplate">
+    <article class="capture-item">
+      <img alt="Captured face snapshot">
+      <div class="capture-actions">
+        <button data-action="save">Save / Share</button>
+        <button data-action="delete" class="danger">Delete</button>
+      </div>
+    </article>
+  </template>
+
+  <script type="module" src="app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(console.error);
+    }
+  </script>
+</body>
+</html>
