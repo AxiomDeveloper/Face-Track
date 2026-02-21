@@ -12,7 +12,10 @@ const dom = {
   flipBtn: document.getElementById('flipBtn'),
   clearBtn: document.getElementById('clearBtn'),
   gallery: document.getElementById('gallery'),
-  template: document.getElementById('captureTemplate')
+  template: document.getElementById('captureTemplate'),
+  statusLine: document.getElementById('statusLine'),
+  iosBtn: document.getElementById('iosBtn'),
+  iosCapture: document.getElementById('iosCapture')
 };
 
 const ctx = dom.overlay.getContext('2d');
@@ -23,6 +26,16 @@ let running = false;
 let facingMode = 'user';
 let currentDetections = [];
 let rafId;
+
+function setStatus(text) {
+  dom.statusLine.textContent = `Status: ${text}`;
+}
+
+function isInAppBrowser() {
+  // Not perfect, but catches the big ones.
+  const ua = navigator.userAgent || '';
+  return /Instagram|FBAN|FBAV|FB_IAB|Line|TikTok|Twitter|X\/|Snapchat/.test(ua);
+}
 
 function loadCaptures() {
   try {
@@ -44,10 +57,7 @@ function renderGallery() {
     const img = node.querySelector('img');
     img.src = item;
 
-    node
-      .querySelector('[data-action="save"]')
-      .addEventListener('click', () => saveOrShare(item, index));
-
+    node.querySelector('[data-action="save"]').addEventListener('click', () => saveOrShare(item, index));
     node.querySelector('[data-action="delete"]').addEventListener('click', () => {
       const next = loadCaptures();
       next.splice(index, 1);
@@ -68,9 +78,7 @@ async function saveOrShare(dataUrl, index) {
       await navigator.share(shareData);
       return;
     }
-  } catch {
-    // Ignore and fallback to download.
-  }
+  } catch {}
 
   const a = document.createElement('a');
   a.href = dataUrl;
@@ -83,45 +91,34 @@ function dataUrlToFile(dataUrl, fileName) {
   const mime = meta.match(/:(.*?);/)[1];
   const bytes = atob(b64);
   const buffer = new Uint8Array(bytes.length);
-
-  for (let i = 0; i < bytes.length; i += 1) {
-    buffer[i] = bytes.charCodeAt(i);
-  }
-
+  for (let i = 0; i < bytes.length; i += 1) buffer[i] = bytes.charCodeAt(i);
   return new File([buffer], fileName, { type: mime });
 }
 
 function waitForVideoReady(videoEl) {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Video metadata timeout')), 8000);
+    const t = setTimeout(() => reject(new Error('Video metadata timeout')), 8000);
 
     const done = () => {
-      clearTimeout(timeout);
+      clearTimeout(t);
       videoEl.removeEventListener('loadedmetadata', done);
       resolve();
     };
 
     if (videoEl.readyState >= 1 && videoEl.videoWidth > 0) {
-      clearTimeout(timeout);
+      clearTimeout(t);
       resolve();
       return;
     }
-
     videoEl.addEventListener('loadedmetadata', done, { once: true });
   });
 }
 
 async function safeGetUserMedia(preferredFacingMode) {
-  // iOS Safari can throw OverconstrainedError on "ideal width/height" + facingMode combos.
-  // Keep constraints simple and progressively fallback.
+  // Keep constraints simple for iOS Safari.
   const attempts = [
-    // Try facingMode as string (often best on iOS)
     { video: { facingMode: preferredFacingMode }, audio: false },
-
-    // Try ideal facingMode object
     { video: { facingMode: { ideal: preferredFacingMode } }, audio: false },
-
-    // Final fallback: just request any camera
     { video: true, audio: false }
   ];
 
@@ -139,6 +136,8 @@ async function safeGetUserMedia(preferredFacingMode) {
 async function initDetector() {
   if (faceDetector) return;
 
+  setStatus('loading detector…');
+
   const resolver = await FilesetResolver.forVisionTasks(
     'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
   );
@@ -151,41 +150,44 @@ async function initDetector() {
     runningMode: 'VIDEO',
     minDetectionConfidence: 0.55
   });
+
+  setStatus('detector ready');
 }
 
 async function startCamera() {
-  if (!window.isSecureContext) {
-    throw new Error('Camera requires HTTPS (secure context).');
-  }
-  if (!navigator.mediaDevices?.getUserMedia) {
-    throw new Error('getUserMedia not available. Use Safari (not in-app browser) and update iOS if needed.');
+  if (!window.isSecureContext) throw new Error('Camera requires HTTPS (secure context).');
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('getUserMedia not available.');
+
+  if (isInAppBrowser()) {
+    // In-app browsers often block camera APIs or permissions.
+    throw new Error('In-app browser detected. Open in Safari for live camera.');
   }
 
   await initDetector();
   stopCamera();
 
-  // iOS: set these in JS as well
   dom.video.setAttribute('playsinline', '');
   dom.video.playsInline = true;
   dom.video.muted = true;
+
+  setStatus('requesting camera permission…');
 
   stream = await safeGetUserMedia(facingMode);
 
   dom.video.srcObject = stream;
 
-  // iOS: wait for metadata before play()
   await waitForVideoReady(dom.video);
 
   try {
     await dom.video.play();
   } catch (e) {
-    // Stream can still be active even if play() complains.
-    console.warn('video.play() failed:', e);
+    console.warn('video.play failed:', e);
   }
 
   resizeOverlay();
   running = true;
   dom.flipBtn.disabled = false;
+  setStatus('live tracking running');
   detectLoop();
 }
 
@@ -195,14 +197,10 @@ function stopCamera() {
   rafId = null;
 
   if (stream) {
-    stream.getTracks().forEach((track) => track.stop());
+    stream.getTracks().forEach((t) => t.stop());
     stream = null;
   }
-
-  // Helps iOS release camera cleanly
-  try {
-    dom.video.pause?.();
-  } catch {}
+  try { dom.video.pause?.(); } catch {}
   dom.video.srcObject = null;
 }
 
@@ -230,7 +228,7 @@ function drawFaces() {
   }
 }
 
-async function detectLoop() {
+function detectLoop() {
   if (!running || !faceDetector || dom.video.readyState < 2) {
     rafId = requestAnimationFrame(detectLoop);
     return;
@@ -241,7 +239,6 @@ async function detectLoop() {
     currentDetections = result.detections || [];
     drawFaces();
   } catch (e) {
-    // If something fails mid-stream, don't brick the loop.
     console.warn('detectForVideo failed:', e);
   }
 
@@ -287,19 +284,46 @@ function pickFaceAtPoint(clientX, clientY) {
   });
 }
 
+// iOS camera prompt fallback (photo capture only)
+function handleIOSPhoto(file) {
+  if (!file) return;
+
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    // store photo into gallery like the face crops
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    canvas.getContext('2d').drawImage(img, 0, 0);
+
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    const captures = loadCaptures();
+    captures.unshift(dataUrl);
+    saveCaptures(captures.slice(0, 40));
+    renderGallery();
+
+    URL.revokeObjectURL(url);
+    setStatus('photo captured (not live)');
+  };
+  img.src = url;
+}
+
 dom.startBtn.addEventListener('click', async () => {
   try {
     await startCamera();
   } catch (error) {
     console.error(error);
+    setStatus(`live failed: ${error?.name || 'Error'} / ${error?.message || error}`);
+
     alert(
-      `Unable to start camera.\n\n` +
-        `Name: ${error?.name || 'Unknown'}\n` +
-        `Message: ${error?.message || error}\n\n` +
-        `Fix tips:\n` +
-        `• iOS Settings > Safari > Camera = Allow\n` +
-        `• Open in Safari (not inside X/IG/TikTok in-app browser)\n` +
-        `• Refresh twice after deploying (service worker cache)\n`
+      `Live Camera failed.\n\n` +
+      `Name: ${error?.name || 'Unknown'}\n` +
+      `Message: ${error?.message || error}\n\n` +
+      `Try:\n` +
+      `• Open in Safari (not IG/X/TikTok browser)\n` +
+      `• iOS Settings > Safari > Camera = Allow\n` +
+      `• If you need a prompt right now, tap "Open iOS Camera (Photo)" (photo-only fallback)\n`
     );
   }
 });
@@ -312,6 +336,17 @@ dom.flipBtn.addEventListener('click', async () => {
     console.error(error);
     alert(`Unable to flip camera:\n${error?.name || ''}\n${error?.message || error}`);
   }
+});
+
+dom.iosBtn.addEventListener('click', () => {
+  // This triggers the native iOS camera picker prompt (photo capture).
+  dom.iosCapture.click();
+});
+
+dom.iosCapture.addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+  handleIOSPhoto(file);
+  e.target.value = '';
 });
 
 dom.clearBtn.addEventListener('click', () => {
@@ -328,3 +363,4 @@ window.addEventListener('resize', resizeOverlay);
 window.addEventListener('beforeunload', stopCamera);
 
 renderGallery();
+setStatus('ready');
