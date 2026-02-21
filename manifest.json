@@ -1,8 +1,8 @@
 {
-  "name": "MI5 Terminal",
-  "short_name": "MI5",
+  "name": "FaceSnap Tracker",
+  "short_name": "FaceSnap",
   "display": "standalone",
-  "background_color": "#050505",
-  "theme_color": "#050505",
-  "start_url": "/index.html"
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "start_url": "./index.html"
 }
