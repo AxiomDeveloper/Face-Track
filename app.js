@@ -16,6 +16,7 @@ const dom = {
 };
 
 const ctx = dom.overlay.getContext('2d');
+
 let faceDetector;
 let stream;
 let running = false;
@@ -43,7 +44,10 @@ function renderGallery() {
     const img = node.querySelector('img');
     img.src = item;
 
-    node.querySelector('[data-action="save"]').addEventListener('click', () => saveOrShare(item, index));
+    node
+      .querySelector('[data-action="save"]')
+      .addEventListener('click', () => saveOrShare(item, index));
+
     node.querySelector('[data-action="delete"]').addEventListener('click', () => {
       const next = loadCaptures();
       next.splice(index, 1);
@@ -87,6 +91,51 @@ function dataUrlToFile(dataUrl, fileName) {
   return new File([buffer], fileName, { type: mime });
 }
 
+function waitForVideoReady(videoEl) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('Video metadata timeout')), 8000);
+
+    const done = () => {
+      clearTimeout(timeout);
+      videoEl.removeEventListener('loadedmetadata', done);
+      resolve();
+    };
+
+    if (videoEl.readyState >= 1 && videoEl.videoWidth > 0) {
+      clearTimeout(timeout);
+      resolve();
+      return;
+    }
+
+    videoEl.addEventListener('loadedmetadata', done, { once: true });
+  });
+}
+
+async function safeGetUserMedia(preferredFacingMode) {
+  // iOS Safari can throw OverconstrainedError on "ideal width/height" + facingMode combos.
+  // Keep constraints simple and progressively fallback.
+  const attempts = [
+    // Try facingMode as string (often best on iOS)
+    { video: { facingMode: preferredFacingMode }, audio: false },
+
+    // Try ideal facingMode object
+    { video: { facingMode: { ideal: preferredFacingMode } }, audio: false },
+
+    // Final fallback: just request any camera
+    { video: true, audio: false }
+  ];
+
+  let lastErr;
+  for (const constraints of attempts) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(constraints);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('Unable to access camera');
+}
+
 async function initDetector() {
   if (faceDetector) return;
 
@@ -105,21 +154,34 @@ async function initDetector() {
 }
 
 async function startCamera() {
-  await initDetector();
+  if (!window.isSecureContext) {
+    throw new Error('Camera requires HTTPS (secure context).');
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('getUserMedia not available. Use Safari (not in-app browser) and update iOS if needed.');
+  }
 
+  await initDetector();
   stopCamera();
 
-  stream = await navigator.mediaDevices.getUserMedia({
-    video: {
-      facingMode: { ideal: facingMode },
-      width: { ideal: 1280 },
-      height: { ideal: 720 }
-    },
-    audio: false
-  });
+  // iOS: set these in JS as well
+  dom.video.setAttribute('playsinline', '');
+  dom.video.playsInline = true;
+  dom.video.muted = true;
+
+  stream = await safeGetUserMedia(facingMode);
 
   dom.video.srcObject = stream;
-  await dom.video.play();
+
+  // iOS: wait for metadata before play()
+  await waitForVideoReady(dom.video);
+
+  try {
+    await dom.video.play();
+  } catch (e) {
+    // Stream can still be active even if play() complains.
+    console.warn('video.play() failed:', e);
+  }
 
   resizeOverlay();
   running = true;
@@ -130,10 +192,18 @@ async function startCamera() {
 function stopCamera() {
   running = false;
   if (rafId) cancelAnimationFrame(rafId);
+  rafId = null;
+
   if (stream) {
     stream.getTracks().forEach((track) => track.stop());
     stream = null;
   }
+
+  // Helps iOS release camera cleanly
+  try {
+    dom.video.pause?.();
+  } catch {}
+  dom.video.srcObject = null;
 }
 
 function resizeOverlay() {
@@ -166,9 +236,14 @@ async function detectLoop() {
     return;
   }
 
-  const result = faceDetector.detectForVideo(dom.video, performance.now());
-  currentDetections = result.detections || [];
-  drawFaces();
+  try {
+    const result = faceDetector.detectForVideo(dom.video, performance.now());
+    currentDetections = result.detections || [];
+    drawFaces();
+  } catch (e) {
+    // If something fails mid-stream, don't brick the loop.
+    console.warn('detectForVideo failed:', e);
+  }
 
   rafId = requestAnimationFrame(detectLoop);
 }
@@ -183,6 +258,7 @@ function captureFace(face) {
   const scaleX = source.width / dom.wrap.clientWidth;
   const scaleY = source.height / dom.wrap.clientHeight;
   const pad = 22;
+
   const x = Math.max(0, (face.boundingBox.originX - pad) * scaleX);
   const y = Math.max(0, (face.boundingBox.originY - pad) * scaleY);
   const w = Math.min(source.width - x, (face.boundingBox.width + pad * 2) * scaleX);
@@ -215,7 +291,16 @@ dom.startBtn.addEventListener('click', async () => {
   try {
     await startCamera();
   } catch (error) {
-    alert(`Unable to start camera: ${error.message}`);
+    console.error(error);
+    alert(
+      `Unable to start camera.\n\n` +
+        `Name: ${error?.name || 'Unknown'}\n` +
+        `Message: ${error?.message || error}\n\n` +
+        `Fix tips:\n` +
+        `• iOS Settings > Safari > Camera = Allow\n` +
+        `• Open in Safari (not inside X/IG/TikTok in-app browser)\n` +
+        `• Refresh twice after deploying (service worker cache)\n`
+    );
   }
 });
 
@@ -224,7 +309,8 @@ dom.flipBtn.addEventListener('click', async () => {
   try {
     await startCamera();
   } catch (error) {
-    alert(`Unable to flip camera: ${error.message}`);
+    console.error(error);
+    alert(`Unable to flip camera:\n${error?.name || ''}\n${error?.message || error}`);
   }
 });
 
