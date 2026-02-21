@@ -84,9 +84,7 @@ button:active {
   background: color-mix(in oklab, var(--accent) 24%, transparent);
 }
 
-button.danger {
-  border-color: var(--danger);
-}
+button.danger { border-color: var(--danger); }
 
 .gallery {
   margin-top: .8rem;
