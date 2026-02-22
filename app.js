@@ -1,6 +1,4 @@
-import vision from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm';
-
-const { FaceDetector, FilesetResolver } = vision;
+import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm';
 
 const STORAGE_KEY = 'facesnap-captures-v1';
 
@@ -20,7 +18,7 @@ const dom = {
 
 const ctx = dom.overlay.getContext('2d');
 
-let faceDetector;
+let faceLandmarker;
 let stream;
 let running = false;
 let facingMode = 'user';
@@ -32,7 +30,6 @@ function setStatus(text) {
 }
 
 function isInAppBrowser() {
-  // Not perfect, but catches the big ones.
   const ua = navigator.userAgent || '';
   return /Instagram|FBAN|FBAV|FB_IAB|Line|TikTok|Twitter|X\/|Snapchat/.test(ua);
 }
@@ -115,7 +112,6 @@ function waitForVideoReady(videoEl) {
 }
 
 async function safeGetUserMedia(preferredFacingMode) {
-  // Keep constraints simple for iOS Safari.
   const attempts = [
     { video: { facingMode: preferredFacingMode }, audio: false },
     { video: { facingMode: { ideal: preferredFacingMode } }, audio: false },
@@ -134,34 +130,31 @@ async function safeGetUserMedia(preferredFacingMode) {
 }
 
 async function initDetector() {
-  if (faceDetector) return;
+  if (faceLandmarker) return;
 
-  setStatus('loading detector…');
+  setStatus('loading AI landmarker…');
 
   const resolver = await FilesetResolver.forVisionTasks(
     'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
   );
 
-  faceDetector = await FaceDetector.createFromOptions(resolver, {
+  faceLandmarker = await FaceLandmarker.createFromOptions(resolver, {
     baseOptions: {
-      modelAssetPath:
-        'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite'
+      modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+      delegate: 'GPU'
     },
+    outputFaceBlendshapes: true,
     runningMode: 'VIDEO',
-    minDetectionConfidence: 0.55
+    numFaces: 1
   });
 
-  setStatus('detector ready');
+  setStatus('AI ready');
 }
 
 async function startCamera() {
   if (!window.isSecureContext) throw new Error('Camera requires HTTPS (secure context).');
   if (!navigator.mediaDevices?.getUserMedia) throw new Error('getUserMedia not available.');
-
-  if (isInAppBrowser()) {
-    // In-app browsers often block camera APIs or permissions.
-    throw new Error('In-app browser detected. Open in Safari for live camera.');
-  }
+  if (isInAppBrowser()) throw new Error('In-app browser detected. Open in Safari for live camera.');
 
   await initDetector();
   stopCamera();
@@ -169,25 +162,25 @@ async function startCamera() {
   dom.video.setAttribute('playsinline', '');
   dom.video.playsInline = true;
   dom.video.muted = true;
+  dom.video.autoplay = true;
 
   setStatus('requesting camera permission…');
 
   stream = await safeGetUserMedia(facingMode);
-
   dom.video.srcObject = stream;
-
-  await waitForVideoReady(dom.video);
 
   try {
     await dom.video.play();
   } catch (e) {
-    console.warn('video.play failed:', e);
+    console.warn('Initial play failed, waiting for metadata:', e);
   }
+
+  await waitForVideoReady(dom.video);
 
   resizeOverlay();
   running = true;
   dom.flipBtn.disabled = false;
-  setStatus('live tracking running');
+  setStatus('live AI tracking running');
   detectLoop();
 }
 
@@ -212,54 +205,75 @@ function resizeOverlay() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
+// Helper to convert the 478 mesh points into a clean bounding box
+function getBoundingBox(landmarks) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const pt of landmarks) {
+    if (pt.x < minX) minX = pt.x;
+    if (pt.y < minY) minY = pt.y;
+    if (pt.x > maxX) maxX = pt.x;
+    if (pt.y > maxY) maxY = pt.y;
+  }
+  return { minX, minY, maxX, maxY, width: maxX - minX, height: maxY - minY };
+}
+
 function drawFaces() {
   const width = dom.wrap.clientWidth;
   const height = dom.wrap.clientHeight;
 
   ctx.clearRect(0, 0, width, height);
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = '#4cc2ff';
-  ctx.fillStyle = 'rgba(76,194,255,.12)';
+  ctx.fillStyle = '#4cc2ff';
 
-  for (const face of currentDetections) {
-    const { originX, originY, width: w, height: h } = face.boundingBox;
-    ctx.fillRect(originX, originY, w, h);
-    ctx.strokeRect(originX, originY, w, h);
+  for (const faceLandmarks of currentDetections) {
+    for (const point of faceLandmarks) {
+      const x = point.x * width;
+      const y = point.y * height;
+      
+      ctx.beginPath();
+      ctx.arc(x, y, 1.5, 0, 2 * Math.PI);
+      ctx.fill();
+    }
   }
 }
 
 function detectLoop() {
-  if (!running || !faceDetector || dom.video.readyState < 2) {
+  if (!running || !faceLandmarker || dom.video.readyState < 2 || dom.video.videoWidth === 0) {
     rafId = requestAnimationFrame(detectLoop);
     return;
   }
 
   try {
-    const result = faceDetector.detectForVideo(dom.video, performance.now());
-    currentDetections = result.detections || [];
+    const result = faceLandmarker.detectForVideo(dom.video, performance.now());
+    currentDetections = result.faceLandmarks || [];
     drawFaces();
   } catch (e) {
-    console.warn('detectForVideo failed:', e);
+    console.warn('AI detection failed:', e);
   }
 
   rafId = requestAnimationFrame(detectLoop);
 }
 
-function captureFace(face) {
+function captureFace(landmarks) {
+  const vw = dom.video.videoWidth;
+  const vh = dom.video.videoHeight;
+  const box = getBoundingBox(landmarks);
+
   const source = document.createElement('canvas');
-  source.width = dom.video.videoWidth;
-  source.height = dom.video.videoHeight;
-  const sctx = source.getContext('2d');
-  sctx.drawImage(dom.video, 0, 0, source.width, source.height);
+  source.width = vw;
+  source.height = vh;
+  source.getContext('2d').drawImage(dom.video, 0, 0, vw, vh);
 
-  const scaleX = source.width / dom.wrap.clientWidth;
-  const scaleY = source.height / dom.wrap.clientHeight;
-  const pad = 22;
+  // Translate normalized 0..1 coordinates to actual video pixels
+  const originX = box.minX * vw;
+  const originY = box.minY * vh;
+  const width = box.width * vw;
+  const height = box.height * vh;
+  const pad = Math.max(vw, vh) * 0.08; // 8% padding around the face
 
-  const x = Math.max(0, (face.boundingBox.originX - pad) * scaleX);
-  const y = Math.max(0, (face.boundingBox.originY - pad) * scaleY);
-  const w = Math.min(source.width - x, (face.boundingBox.width + pad * 2) * scaleX);
-  const h = Math.min(source.height - y, (face.boundingBox.height + pad * 2) * scaleY);
+  const x = Math.max(0, originX - pad);
+  const y = Math.max(0, originY - pad);
+  const w = Math.min(vw - x, width + pad * 2);
+  const h = Math.min(vh - y, height + pad * 2);
 
   const crop = document.createElement('canvas');
   crop.width = Math.max(1, Math.round(w));
@@ -278,20 +292,23 @@ function pickFaceAtPoint(clientX, clientY) {
   const x = clientX - rect.left;
   const y = clientY - rect.top;
 
-  return currentDetections.find((face) => {
-    const b = face.boundingBox;
-    return x >= b.originX && x <= b.originX + b.width && y >= b.originY && y <= b.originY + b.height;
+  return currentDetections.find((landmarks) => {
+    const box = getBoundingBox(landmarks);
+    const pX = box.minX * rect.width;
+    const pY = box.minY * rect.height;
+    const pW = box.width * rect.width;
+    const pH = box.height * rect.height;
+    
+    return x >= pX && x <= pX + pW && y >= pY && y <= pY + pH;
   });
 }
 
-// iOS camera prompt fallback (photo capture only)
 function handleIOSPhoto(file) {
   if (!file) return;
 
   const url = URL.createObjectURL(file);
   const img = new Image();
   img.onload = () => {
-    // store photo into gallery like the face crops
     const canvas = document.createElement('canvas');
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
@@ -315,15 +332,8 @@ dom.startBtn.addEventListener('click', async () => {
   } catch (error) {
     console.error(error);
     setStatus(`live failed: ${error?.name || 'Error'} / ${error?.message || error}`);
-
     alert(
-      `Live Camera failed.\n\n` +
-      `Name: ${error?.name || 'Unknown'}\n` +
-      `Message: ${error?.message || error}\n\n` +
-      `Try:\n` +
-      `• Open in Safari (not IG/X/TikTok browser)\n` +
-      `• iOS Settings > Safari > Camera = Allow\n` +
-      `• If you need a prompt right now, tap "Open iOS Camera (Photo)" (photo-only fallback)\n`
+      `Live Camera failed.\n\nName: ${error?.name || 'Unknown'}\nMessage: ${error?.message || error}\n\nTry:\n• Open in Safari (not IG/X/TikTok browser)\n• iOS Settings > Safari > Camera = Allow`
     );
   }
 });
@@ -339,7 +349,6 @@ dom.flipBtn.addEventListener('click', async () => {
 });
 
 dom.iosBtn.addEventListener('click', () => {
-  // This triggers the native iOS camera picker prompt (photo capture).
   dom.iosCapture.click();
 });
 
