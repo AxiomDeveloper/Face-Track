@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>FaceSnap Tracker</title>
+  <title>Tactical FaceSnap</title>
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header>
-    <h1>FaceSnap Tracker</h1>
-    <p>Live face tracking (Safari) + iOS Camera fallback</p>
+    <h1>Tactical Face Tracker</h1>
+    <p>Live Crowd Scanner (Tap target to extract)</p>
   </header>
 
   <main>
@@ -23,53 +23,49 @@
       </div>
 
       <div class="controls">
-        <button id="startBtn">Start Live Camera</button>
-        <button id="flipBtn" disabled>Flip Camera</button>
-        <button id="iosBtn" class="ghost">Open iOS Camera (Photo)</button>
-      </div>
-
-      <div class="controls">
-        <button id="clearBtn" class="danger">Clear Temp Captures</button>
+        <button id="startBtn">Start Scanner</button>
+        <button id="flipBtn" disabled>Flip Cam</button>
+        <button id="iosBtn" class="ghost">iOS Photo Fallback</button>
       </div>
 
       <p class="hint" id="statusLine">Status: idle</p>
-      <p class="hint">
-        If Live Camera doesn’t work, you’re usually inside an in-app browser (X/IG/TikTok). Open in Safari.
-      </p>
 
-      <!-- iOS camera prompt fallback (photo only, not live stream) -->
       <input
         id="iosCapture"
         type="file"
         accept="image/*"
-        capture="user"
+        capture="environment"
         style="display:none"
       />
     </section>
 
     <section class="gallery-card">
-      <h2>Temp Captures</h2>
-      <p class="hint">
-        Saved in this browser (localStorage). Use <strong>Save/Share</strong> on iPhone to add to Photos.
-      </p>
+      <div class="gallery-header">
+        <h2>Extracted Targets</h2>
+        <button id="saveAllBtn" class="accent">Save All</button>
+      </div>
+      <p class="hint">Saved temporarily in browser. Use Save All to export.</p>
+      
+      <div class="controls">
+        <button id="clearBtn" class="danger">Clear Data</button>
+      </div>
+      
       <div id="gallery" class="gallery"></div>
     </section>
   </main>
 
   <template id="captureTemplate">
     <article class="capture-item">
-      <img alt="Captured face snapshot" />
+      <img alt="Target snapshot" />
       <div class="capture-actions">
-        <button data-action="save">Save / Share</button>
-        <button data-action="delete" class="danger">Delete</button>
+        <button data-action="save">Export</button>
+        <button data-action="delete" class="danger">Trash</button>
       </div>
     </article>
   </template>
 
   <script type="module" src="app.js"></script>
   <script>
-    // IMPORTANT: if you keep a service worker, stale caches can break camera debugging.
-    // For now, we unregister any old SW to prevent “it still don’t work” due to stale JS.
     (async () => {
       if ('serviceWorker' in navigator) {
         const regs = await navigator.serviceWorker.getRegistrations();
