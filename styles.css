@@ -1,61 +1,36 @@
 :root {
   color-scheme: dark;
-  --bg: #050505;
-  --card: #111111;
+  --bg: #000000;
   --text: #e6edf3;
-  --muted: #888888;
+  --muted: #a1a1aa;
   --accent: #ffee00;
   --accent-text: #000000;
   --danger: #ff4444;
-  --border: #222222;
+  --glass: rgba(20, 20, 20, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.15);
 }
 
 * { box-sizing: border-box; }
 
-body {
+html, body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden; /* Prevents web bouncing */
   background: var(--bg);
   color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
 }
 
-header {
-  padding: 1rem;
-  text-align: center;
-}
-
-h1, h2, p { margin: 0; }
-header p, .hint { color: var(--muted); margin-top: .35rem; font-size: 0.85rem; }
-
-main {
-  width: min(900px, 100%);
-  margin: 0 auto;
-  padding: 0 0.85rem 2rem;
-  display: grid;
-  gap: 1rem;
-}
-
-.camera-card, .gallery-card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: .9rem;
-}
-
-.gallery-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.5rem;
-}
-
+/* Layer 1: Background Camera */
 .video-wrap {
-  position: relative;
-  width: 100%;
-  border-radius: 8px;
-  overflow: hidden;
+  position: absolute;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1;
   background: #000;
-  aspect-ratio: 3 / 4;
 }
 
 video, canvas {
@@ -63,75 +38,108 @@ video, canvas {
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: cover; /* Ensures video fills screen without black bars */
 }
 
-canvas { pointer-events: auto; }
+canvas { pointer-events: auto; } /* Allows tapping on faces */
 
-.controls {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: .5rem;
-  margin-top: .8rem;
+/* Layer 2: Transparent HUD Container */
+.hud {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  pointer-events: none; /* Let taps pass through the invisible body to the canvas */
 }
 
-.controls + .controls { grid-template-columns: 1fr; }
+/* Re-enable taps ONLY on actual UI elements */
+.hud-top, .hud-bottom { pointer-events: auto; }
+
+/* HUD Top Bar */
+.hud-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: env(safe-area-inset-top, 15px) 15px 15px;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.8) 0%, transparent 100%);
+}
+
+h1 { margin: 0; font-size: 1.1rem; letter-spacing: 1px; }
+#statusLine { margin: 4px 0 0; font-size: 0.8rem; color: var(--accent); }
+
+/* HUD Bottom Area */
+.hud-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 15px 15px env(safe-area-inset-bottom, 20px);
+  background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.4) 60%, transparent 100%);
+}
+
+.actions-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
 button {
-  border: 1px solid var(--border);
-  background: #1a1a1a;
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
   color: var(--text);
-  border-radius: 6px;
-  min-height: 44px;
-  padding: .45rem .6rem;
-  font-size: .9rem;
+  border-radius: 8px;
+  min-height: 44px; /* iOS minimum touch target size */
+  padding: 0 16px;
+  font-size: 0.9rem;
   font-weight: bold;
   font-family: monospace;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
+  transition: transform 0.1s, background 0.2s;
 }
 
-button:active { transform: scale(.98); }
+button:active { transform: scale(0.96); }
+button.accent { background: var(--accent); color: var(--accent-text); border: none; }
+button.icon-btn { flex: 0 0 auto; min-width: 44px; padding: 0; border-radius: 50%; }
 
-button.accent {
-  background: var(--accent);
-  color: var(--accent-text);
-  border-color: var(--accent);
+/* Horizontal Floating Gallery */
+.floating-gallery {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 5px;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
 }
 
-button.danger { border-color: var(--danger); color: var(--danger); }
-button.ghost { border-color: #333; }
-
-.gallery {
-  margin-top: .8rem;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: .75rem;
-}
+.floating-gallery::-webkit-scrollbar { display: none; } /* Hide scrollbar */
 
 .capture-item {
-  border: 1px solid var(--border);
+  flex: 0 0 90px;
+  scroll-snap-align: start;
   border-radius: 8px;
   overflow: hidden;
+  border: 1px solid var(--glass-border);
   background: #000;
+  display: flex;
+  flex-direction: column;
 }
 
 .capture-item img {
-  display: block;
-  width: 100%;
-  aspect-ratio: 1;
+  width: 90px;
+  height: 90px;
   object-fit: cover;
+  display: block;
 }
 
-.capture-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px;
-  background: var(--border);
-}
-
+.capture-actions { display: flex; }
 .capture-actions button {
-  border: none;
-  border-radius: 0;
-  min-height: 36px;
-  font-size: 0.8rem;
+  flex: 1; min-height: 32px; border-radius: 0; border: none; font-size: 1rem;
 }
+.capture-actions button.danger { background: rgba(255, 68, 68, 0.2); }
