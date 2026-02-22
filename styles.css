@@ -30,6 +30,8 @@ html, body {
   height: 100vh;
   z-index: 1;
   background: #000;
+  transform-origin: center center;
+  transition: transform 0.1s ease-out; /* Smooth digital zoom */
 }
 
 video, canvas {
@@ -71,6 +73,26 @@ h1 { margin: 0; font-size: 1.1rem; letter-spacing: 1px; color: var(--text); }
   gap: 12px;
   padding: 15px 15px env(safe-area-inset-bottom, 30px);
   background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.4) 60%, transparent 100%);
+}
+
+/* Zoom Control Styling */
+.zoom-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 5px;
+  margin-bottom: 5px;
+}
+
+.zoom-control span {
+  font-weight: bold;
+  font-size: 0.85rem;
+  color: var(--accent);
+}
+
+input[type=range] {
+  flex: 1;
+  accent-color: var(--accent); 
 }
 
 .actions-bar {
