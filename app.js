@@ -10,6 +10,7 @@ const dom = {
   flipBtn: document.getElementById('flipBtn'),
   clearBtn: document.getElementById('clearBtn'),
   saveAllBtn: document.getElementById('saveAllBtn'),
+  zoomSlider: document.getElementById('zoomSlider'),
   gallery: document.getElementById('gallery'),
   template: document.getElementById('captureTemplate'),
   statusLine: document.getElementById('statusLine'),
@@ -124,20 +125,17 @@ function waitForVideoReady(videoEl) {
   });
 }
 
-// UPGRADE 1: Forcing Maximum Resolution (4K / 1080p)
 async function safeGetUserMedia(preferredFacingMode) {
+  // Demand Maximum Resolution for long-distance targeting
   const attempts = [
-    // Attempt 1: Demand 4K resolution (Perfect for distant crowds)
     { 
       video: { 
         facingMode: { ideal: preferredFacingMode },
         width: { ideal: 3840 }, 
-        height: { ideal: 2160 },
-        frameRate: { ideal: 30 }
+        height: { ideal: 2160 }
       }, 
       audio: false 
     },
-    // Attempt 2: Fallback to 1080p if 4K is rejected
     { 
       video: { 
         facingMode: { ideal: preferredFacingMode },
@@ -146,24 +144,16 @@ async function safeGetUserMedia(preferredFacingMode) {
       }, 
       audio: false 
     },
-    // Attempt 3: Standard generic fallback
-    { video: { facingMode: preferredFacingMode }, audio: false },
-    { video: true, audio: false }
+    { video: { facingMode: preferredFacingMode }, audio: false }
   ];
-
   let lastErr;
   for (const constraints of attempts) {
-    try { 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints); 
-      console.log("Camera constraints accepted:", constraints);
-      return stream;
-    } 
+    try { return await navigator.mediaDevices.getUserMedia(constraints); } 
     catch (e) { lastErr = e; }
   }
   throw lastErr || new Error('Unable to access high-res camera');
 }
 
-// UPGRADE 2: Aggressive AI Tuning
 async function initDetector() {
   if (faceLandmarker) return;
   setStatus('Loading AI core...');
@@ -173,14 +163,15 @@ async function initDetector() {
   faceLandmarker = await FaceLandmarker.createFromOptions(resolver, {
     baseOptions: {
       modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-      delegate: 'GPU' // Hardware acceleration is mandatory for 4K video
+      delegate: 'GPU'
     },
     outputFaceBlendshapes: true,
     runningMode: 'VIDEO',
-    numFaces: 20, // Increased to track 20 simultaneous targets
-    minFaceDetectionConfidence: 0.35, // Dropped from 0.5 to catch smaller/distant faces
-    minFacePresenceConfidence: 0.35,
-    minTrackingConfidence: 0.35
+    numFaces: 20, 
+    // Aggressive Confidence Drops for distant faces
+    minFaceDetectionConfidence: 0.25, 
+    minFacePresenceConfidence: 0.25,
+    minTrackingConfidence: 0.25
   });
   setStatus('AI Ready');
 }
@@ -205,9 +196,25 @@ async function startCamera() {
   resizeOverlay();
   running = true;
   dom.flipBtn.disabled = false;
-  
-  // Log actual active resolution to verify 4K/1080p
+
+  // Zoom Logic Integration
   const track = stream.getVideoTracks()[0];
+  const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+  
+  dom.zoomSlider.oninput = (e) => {
+    const val = parseFloat(e.target.value);
+    if (capabilities.zoom) {
+      track.applyConstraints({ advanced: [{ zoom: val }] }).catch(() => {
+        dom.wrap.style.transform = `scale(${val})`;
+      });
+    } else {
+      dom.wrap.style.transform = `scale(${val})`;
+    }
+  };
+  
+  dom.zoomSlider.value = 1;
+  dom.wrap.style.transform = 'scale(1)';
+
   const settings = track.getSettings();
   setStatus(`Scanner Active (${settings.width}x${settings.height})`);
   
@@ -368,7 +375,6 @@ function captureFace(landmarks) {
   crop.getContext('2d').drawImage(source, x, y, w, h, 0, 0, crop.width, crop.height);
 
   const captures = loadCaptures();
-  // We use 0.95 JPEG quality here to ensure the zoomed-in photo looks pristine
   captures.unshift(crop.toDataURL('image/jpeg', 0.95));
   saveCaptures(captures.slice(0, 40));
   renderGallery();
