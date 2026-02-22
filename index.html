@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Tactical HUD</title>
+  <meta name="apple-mobile-web-app-title" content="Scanner" />
+  <title>Tactical Face Scanner</title>
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -52,5 +53,14 @@
   </template>
 
   <script type="module" src="app.js"></script>
+  <script>
+    // Nuke old service workers to ensure the new fullscreen app loads immediately
+    (async () => {
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        for (const r of regs) await r.unregister();
+      }
+    })().catch(console.error);
+  </script>
 </body>
 </html>
