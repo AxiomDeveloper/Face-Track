@@ -51,7 +51,7 @@ canvas { pointer-events: auto; } /* Allows tapping on faces */
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  pointer-events: none; /* Let taps pass through the invisible body to the canvas */
+  pointer-events: none; /* Crucial: Lets taps pass through the invisible body to the canvas */
 }
 
 /* Re-enable taps ONLY on actual UI elements */
@@ -62,11 +62,11 @@ canvas { pointer-events: auto; } /* Allows tapping on faces */
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding: env(safe-area-inset-top, 15px) 15px 15px;
+  padding: env(safe-area-inset-top, 45px) 15px 15px; /* Respects iPhone notch/Dynamic Island */
   background: linear-gradient(to bottom, rgba(0,0,0,0.8) 0%, transparent 100%);
 }
 
-h1 { margin: 0; font-size: 1.1rem; letter-spacing: 1px; }
+h1 { margin: 0; font-size: 1.1rem; letter-spacing: 1px; color: var(--text); }
 #statusLine { margin: 4px 0 0; font-size: 0.8rem; color: var(--accent); }
 
 /* HUD Bottom Area */
@@ -74,7 +74,7 @@ h1 { margin: 0; font-size: 1.1rem; letter-spacing: 1px; }
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 15px 15px env(safe-area-inset-bottom, 20px);
+  padding: 15px 15px env(safe-area-inset-bottom, 30px);
   background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.4) 60%, transparent 100%);
 }
 
@@ -106,7 +106,7 @@ button {
 
 button:active { transform: scale(0.96); }
 button.accent { background: var(--accent); color: var(--accent-text); border: none; }
-button.icon-btn { flex: 0 0 auto; min-width: 44px; padding: 0; border-radius: 50%; }
+button.icon-btn { flex: 0 0 auto; min-width: 44px; padding: 0; border-radius: 50%; font-size: 1.2rem; }
 
 /* Horizontal Floating Gallery */
 .floating-gallery {
@@ -115,10 +115,10 @@ button.icon-btn { flex: 0 0 auto; min-width: 44px; padding: 0; border-radius: 50
   overflow-x: auto;
   padding-bottom: 5px;
   scroll-snap-type: x mandatory;
-  -webkit-overflow-scrolling: touch;
+  -webkit-overflow-scrolling: touch; /* Smooth momentum scrolling on iOS */
 }
 
-.floating-gallery::-webkit-scrollbar { display: none; } /* Hide scrollbar */
+.floating-gallery::-webkit-scrollbar { display: none; } /* Hide scrollbar for native look */
 
 .capture-item {
   flex: 0 0 90px;
@@ -140,6 +140,6 @@ button.icon-btn { flex: 0 0 auto; min-width: 44px; padding: 0; border-radius: 50
 
 .capture-actions { display: flex; }
 .capture-actions button {
-  flex: 1; min-height: 32px; border-radius: 0; border: none; font-size: 1rem;
+  flex: 1; min-height: 32px; border-radius: 0; border: none; font-size: 1rem; padding: 0;
 }
 .capture-actions button.danger { background: rgba(255, 68, 68, 0.2); }
