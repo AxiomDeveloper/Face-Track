@@ -17,13 +17,12 @@ html, body {
   padding: 0;
   width: 100vw;
   height: 100vh;
-  overflow: hidden; /* Prevents web bouncing */
+  overflow: hidden; 
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
 }
 
-/* Layer 1: Background Camera */
 .video-wrap {
   position: absolute;
   inset: 0;
@@ -38,12 +37,11 @@ video, canvas {
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover; /* Ensures video fills screen without black bars */
+  object-fit: cover; 
 }
 
-canvas { pointer-events: auto; } /* Allows tapping on faces */
+canvas { pointer-events: auto; }
 
-/* Layer 2: Transparent HUD Container */
 .hud {
   position: absolute;
   inset: 0;
@@ -51,25 +49,22 @@ canvas { pointer-events: auto; } /* Allows tapping on faces */
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  pointer-events: none; /* Crucial: Lets taps pass through the invisible body to the canvas */
+  pointer-events: none; 
 }
 
-/* Re-enable taps ONLY on actual UI elements */
 .hud-top, .hud-bottom { pointer-events: auto; }
 
-/* HUD Top Bar */
 .hud-top {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding: env(safe-area-inset-top, 45px) 15px 15px; /* Respects iPhone notch/Dynamic Island */
+  padding: env(safe-area-inset-top, 45px) 15px 15px; 
   background: linear-gradient(to bottom, rgba(0,0,0,0.8) 0%, transparent 100%);
 }
 
 h1 { margin: 0; font-size: 1.1rem; letter-spacing: 1px; color: var(--text); }
 #statusLine { margin: 4px 0 0; font-size: 0.8rem; color: var(--accent); }
 
-/* HUD Bottom Area */
 .hud-bottom {
   display: flex;
   flex-direction: column;
@@ -91,7 +86,7 @@ button {
   border: 1px solid var(--glass-border);
   color: var(--text);
   border-radius: 8px;
-  min-height: 44px; /* iOS minimum touch target size */
+  min-height: 44px; 
   padding: 0 16px;
   font-size: 0.9rem;
   font-weight: bold;
@@ -108,17 +103,16 @@ button:active { transform: scale(0.96); }
 button.accent { background: var(--accent); color: var(--accent-text); border: none; }
 button.icon-btn { flex: 0 0 auto; min-width: 44px; padding: 0; border-radius: 50%; font-size: 1.2rem; }
 
-/* Horizontal Floating Gallery */
 .floating-gallery {
   display: flex;
   gap: 10px;
   overflow-x: auto;
   padding-bottom: 5px;
   scroll-snap-type: x mandatory;
-  -webkit-overflow-scrolling: touch; /* Smooth momentum scrolling on iOS */
+  -webkit-overflow-scrolling: touch; 
 }
 
-.floating-gallery::-webkit-scrollbar { display: none; } /* Hide scrollbar for native look */
+.floating-gallery::-webkit-scrollbar { display: none; }
 
 .capture-item {
   flex: 0 0 90px;
