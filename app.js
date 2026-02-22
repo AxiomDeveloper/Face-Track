@@ -1,6 +1,6 @@
 import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm';
 
-const STORAGE_KEY = 'facesnap-tactical-v5';
+const STORAGE_KEY = 'facesnap-tactical-v6';
 
 const dom = {
   video: document.getElementById('camera'),
@@ -124,20 +124,46 @@ function waitForVideoReady(videoEl) {
   });
 }
 
+// UPGRADE 1: Forcing Maximum Resolution (4K / 1080p)
 async function safeGetUserMedia(preferredFacingMode) {
   const attempts = [
+    // Attempt 1: Demand 4K resolution (Perfect for distant crowds)
+    { 
+      video: { 
+        facingMode: { ideal: preferredFacingMode },
+        width: { ideal: 3840 }, 
+        height: { ideal: 2160 },
+        frameRate: { ideal: 30 }
+      }, 
+      audio: false 
+    },
+    // Attempt 2: Fallback to 1080p if 4K is rejected
+    { 
+      video: { 
+        facingMode: { ideal: preferredFacingMode },
+        width: { ideal: 1920 }, 
+        height: { ideal: 1080 }
+      }, 
+      audio: false 
+    },
+    // Attempt 3: Standard generic fallback
     { video: { facingMode: preferredFacingMode }, audio: false },
-    { video: { facingMode: { ideal: preferredFacingMode } }, audio: false },
     { video: true, audio: false }
   ];
+
   let lastErr;
   for (const constraints of attempts) {
-    try { return await navigator.mediaDevices.getUserMedia(constraints); } 
+    try { 
+      const stream = await navigator.mediaDevices.getUserMedia(constraints); 
+      console.log("Camera constraints accepted:", constraints);
+      return stream;
+    } 
     catch (e) { lastErr = e; }
   }
-  throw lastErr || new Error('Unable to access camera');
+  throw lastErr || new Error('Unable to access high-res camera');
 }
 
+// UPGRADE 2: Aggressive AI Tuning
 async function initDetector() {
   if (faceLandmarker) return;
   setStatus('Loading AI core...');
@@ -147,11 +173,14 @@ async function initDetector() {
   faceLandmarker = await FaceLandmarker.createFromOptions(resolver, {
     baseOptions: {
       modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-      delegate: 'GPU'
+      delegate: 'GPU' // Hardware acceleration is mandatory for 4K video
     },
     outputFaceBlendshapes: true,
     runningMode: 'VIDEO',
-    numFaces: 10 
+    numFaces: 20, // Increased to track 20 simultaneous targets
+    minFaceDetectionConfidence: 0.35, // Dropped from 0.5 to catch smaller/distant faces
+    minFacePresenceConfidence: 0.35,
+    minTrackingConfidence: 0.35
   });
   setStatus('AI Ready');
 }
@@ -166,7 +195,7 @@ async function startCamera() {
   dom.video.muted = true;
   dom.video.autoplay = true;
 
-  setStatus('Requesting optics...');
+  setStatus('Requesting high-res optics...');
   stream = await safeGetUserMedia(facingMode);
   dom.video.srcObject = stream;
 
@@ -176,7 +205,12 @@ async function startCamera() {
   resizeOverlay();
   running = true;
   dom.flipBtn.disabled = false;
-  setStatus('Scanner Active: Tap box to extract target.');
+  
+  // Log actual active resolution to verify 4K/1080p
+  const track = stream.getVideoTracks()[0];
+  const settings = track.getSettings();
+  setStatus(`Scanner Active (${settings.width}x${settings.height})`);
+  
   detectLoop();
 }
 
@@ -230,12 +264,10 @@ function drawFaces() {
     const h = box.height * height;
     const pad = 12;
 
-    // Tactical Yellow Box
     ctx.strokeStyle = '#ffee00';
     ctx.lineWidth = 2;
     ctx.strokeRect(x - pad, y - pad, w + pad * 2, h + pad * 2);
 
-    // Bio-Telemetry Logic
     let attnStatus = "LOCKED";
     let vocalStatus = "SILENT";
     let exprStatus = "NEUTRAL";
@@ -244,21 +276,17 @@ function drawFaces() {
       const cats = currentBlendshapes[index].categories;
       const getScore = (name) => cats.find(c => c.categoryName === name)?.score || 0;
 
-      // 1. Vocal / Jaw Status
       const jawOpen = getScore('jawOpen');
       if (jawOpen > 0.15) vocalStatus = "ACTIVE (TALKING)";
 
-      // 2. Expression Status
       const smile = (getScore('mouthSmileLeft') + getScore('mouthSmileRight')) / 2;
       const squint = (getScore('eyeSquintLeft') + getScore('eyeSquintRight')) / 2;
 
       if (smile > 0.4) exprStatus = "SMILING";
       else if (squint > 0.4) exprStatus = "SQUINTING";
 
-      // 3. Attention / Gaze
       const blinkL = getScore('eyeBlinkLeft');
       const blinkR = getScore('eyeBlinkRight');
-      
       const lookingLeft = getScore('eyeLookOutLeft') + getScore('eyeLookInRight'); 
       const lookingRight = getScore('eyeLookInLeft') + getScore('eyeLookOutRight');
 
@@ -269,17 +297,12 @@ function drawFaces() {
       }
     }
 
-    // HUD Label Drawing
     ctx.fillStyle = 'rgba(255, 238, 0, 0.9)';
     const labelY = (y - pad) + h + pad * 2;
-    
-    // Taller box to fit 4 lines of tactical data
     ctx.fillRect(x - pad, labelY, w + pad * 2, 64);
 
     ctx.fillStyle = '#000000';
     ctx.font = 'bold 11px monospace';
-    
-    // Draw the data lines
     ctx.fillText(`TRGT-${index + 1} // BIO-METRICS`, x - pad + 4, labelY + 14);
     ctx.fillText(`ATTN:  ${attnStatus}`, x - pad + 4, labelY + 28);
     ctx.fillText(`VOCAL: ${vocalStatus}`, x - pad + 4, labelY + 42);
@@ -312,7 +335,7 @@ function pickFaceAtPoint(clientX, clientY) {
     const bY = box.minY * rect.height;
     const bW = box.width * rect.width;
     const bH = box.height * rect.height;
-    const pad = 30; // Highly forgiving tap area
+    const pad = 30; 
     return tapX >= (bX - pad) && tapX <= (bX + bW + pad) && 
            tapY >= (bY - pad) && tapY <= (bY + bH + pad);
   });
@@ -345,6 +368,7 @@ function captureFace(landmarks) {
   crop.getContext('2d').drawImage(source, x, y, w, h, 0, 0, crop.width, crop.height);
 
   const captures = loadCaptures();
+  // We use 0.95 JPEG quality here to ensure the zoomed-in photo looks pristine
   captures.unshift(crop.toDataURL('image/jpeg', 0.95));
   saveCaptures(captures.slice(0, 40));
   renderGallery();
