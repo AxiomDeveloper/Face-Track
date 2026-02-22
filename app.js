@@ -1,6 +1,6 @@
 import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm';
 
-const STORAGE_KEY = 'facesnap-captures-v1';
+const STORAGE_KEY = 'facesnap-tactical-v2';
 
 const dom = {
   video: document.getElementById('camera'),
@@ -9,6 +9,7 @@ const dom = {
   startBtn: document.getElementById('startBtn'),
   flipBtn: document.getElementById('flipBtn'),
   clearBtn: document.getElementById('clearBtn'),
+  saveAllBtn: document.getElementById('saveAllBtn'),
   gallery: document.getElementById('gallery'),
   template: document.getElementById('captureTemplate'),
   statusLine: document.getElementById('statusLine'),
@@ -21,25 +22,18 @@ const ctx = dom.overlay.getContext('2d');
 let faceLandmarker;
 let stream;
 let running = false;
-let facingMode = 'user';
+let facingMode = 'environment'; // Default to back camera for crowds
 let currentDetections = [];
+let currentBlendshapes = [];
 let rafId;
 
 function setStatus(text) {
   dom.statusLine.textContent = `Status: ${text}`;
 }
 
-function isInAppBrowser() {
-  const ua = navigator.userAgent || '';
-  return /Instagram|FBAN|FBAV|FB_IAB|Line|TikTok|Twitter|X\/|Snapchat/.test(ua);
-}
-
 function loadCaptures() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-  } catch {
-    return [];
-  }
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); } 
+  catch { return []; }
 }
 
 function saveCaptures(captures) {
@@ -49,6 +43,9 @@ function saveCaptures(captures) {
 function renderGallery() {
   const captures = loadCaptures();
   dom.gallery.innerHTML = '';
+  
+  dom.saveAllBtn.style.display = captures.length > 0 ? 'block' : 'none';
+
   captures.forEach((item, index) => {
     const node = dom.template.content.firstElementChild.cloneNode(true);
     const img = node.querySelector('img');
@@ -66,23 +63,6 @@ function renderGallery() {
   });
 }
 
-async function saveOrShare(dataUrl, index) {
-  const file = dataUrlToFile(dataUrl, `facesnap-${Date.now()}-${index}.jpg`);
-  const shareData = { files: [file], title: 'FaceSnap Capture' };
-
-  try {
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share(shareData);
-      return;
-    }
-  } catch {}
-
-  const a = document.createElement('a');
-  a.href = dataUrl;
-  a.download = file.name;
-  a.click();
-}
-
 function dataUrlToFile(dataUrl, fileName) {
   const [meta, b64] = dataUrl.split(',');
   const mime = meta.match(/:(.*?);/)[1];
@@ -92,16 +72,51 @@ function dataUrlToFile(dataUrl, fileName) {
   return new File([buffer], fileName, { type: mime });
 }
 
+async function saveOrShare(dataUrl, index) {
+  const file = dataUrlToFile(dataUrl, `target-${Date.now()}-${index}.jpg`);
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'Target Extracted' });
+      return;
+    }
+  } catch {}
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = file.name;
+  a.click();
+}
+
+async function saveAllToDevice() {
+  const captures = loadCaptures();
+  if (captures.length === 0) return;
+  
+  const files = captures.map((dataUrl, i) => dataUrlToFile(dataUrl, `target-${Date.now()}-${i}.jpg`));
+  
+  try {
+    // On iOS, this opens the share sheet allowing "Save X Images" to camera roll
+    if (navigator.canShare && navigator.canShare({ files })) {
+      await navigator.share({ files, title: 'Tactical Extraction' });
+      return;
+    }
+  } catch (e) { console.log('Share API failed, falling back to individual downloads'); }
+
+  // Fallback for non-iOS
+  files.forEach(file => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(file);
+    a.download = file.name;
+    a.click();
+  });
+}
+
 function waitForVideoReady(videoEl) {
   return new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('Video metadata timeout')), 8000);
-
+    const t = setTimeout(() => reject(new Error('Video timeout')), 8000);
     const done = () => {
       clearTimeout(t);
       videoEl.removeEventListener('loadedmetadata', done);
       resolve();
     };
-
     if (videoEl.readyState >= 1 && videoEl.videoWidth > 0) {
       clearTimeout(t);
       resolve();
@@ -117,27 +132,20 @@ async function safeGetUserMedia(preferredFacingMode) {
     { video: { facingMode: { ideal: preferredFacingMode } }, audio: false },
     { video: true, audio: false }
   ];
-
   let lastErr;
   for (const constraints of attempts) {
-    try {
-      return await navigator.mediaDevices.getUserMedia(constraints);
-    } catch (e) {
-      lastErr = e;
-    }
+    try { return await navigator.mediaDevices.getUserMedia(constraints); } 
+    catch (e) { lastErr = e; }
   }
   throw lastErr || new Error('Unable to access camera');
 }
 
 async function initDetector() {
   if (faceLandmarker) return;
-
-  setStatus('loading AI landmarker…');
-
+  setStatus('loading crowd AI…');
   const resolver = await FilesetResolver.forVisionTasks(
     'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
   );
-
   faceLandmarker = await FaceLandmarker.createFromOptions(resolver, {
     baseOptions: {
       modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
@@ -145,17 +153,13 @@ async function initDetector() {
     },
     outputFaceBlendshapes: true,
     runningMode: 'VIDEO',
-    numFaces: 1
+    numFaces: 10 // Multi-target tracking
   });
-
   setStatus('AI ready');
 }
 
 async function startCamera() {
-  if (!window.isSecureContext) throw new Error('Camera requires HTTPS (secure context).');
-  if (!navigator.mediaDevices?.getUserMedia) throw new Error('getUserMedia not available.');
-  if (isInAppBrowser()) throw new Error('In-app browser detected. Open in Safari for live camera.');
-
+  if (!window.isSecureContext) throw new Error('Requires HTTPS.');
   await initDetector();
   stopCamera();
 
@@ -164,23 +168,17 @@ async function startCamera() {
   dom.video.muted = true;
   dom.video.autoplay = true;
 
-  setStatus('requesting camera permission…');
-
+  setStatus('requesting camera…');
   stream = await safeGetUserMedia(facingMode);
   dom.video.srcObject = stream;
 
-  try {
-    await dom.video.play();
-  } catch (e) {
-    console.warn('Initial play failed, waiting for metadata:', e);
-  }
-
+  try { await dom.video.play(); } catch (e) {}
   await waitForVideoReady(dom.video);
 
   resizeOverlay();
   running = true;
   dom.flipBtn.disabled = false;
-  setStatus('live AI tracking running');
+  setStatus('Scanner Active: Tap yellow box to extract target.');
   detectLoop();
 }
 
@@ -188,13 +186,10 @@ function stopCamera() {
   running = false;
   if (rafId) cancelAnimationFrame(rafId);
   rafId = null;
-
-  if (stream) {
-    stream.getTracks().forEach((t) => t.stop());
-    stream = null;
-  }
+  if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
   try { dom.video.pause?.(); } catch {}
   dom.video.srcObject = null;
+  ctx.clearRect(0, 0, dom.overlay.width, dom.overlay.height);
 }
 
 function resizeOverlay() {
@@ -205,7 +200,6 @@ function resizeOverlay() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-// Helper to convert the 478 mesh points into a clean bounding box
 function getBoundingBox(landmarks) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const pt of landmarks) {
@@ -220,20 +214,40 @@ function getBoundingBox(landmarks) {
 function drawFaces() {
   const width = dom.wrap.clientWidth;
   const height = dom.wrap.clientHeight;
-
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = '#4cc2ff';
+  if (currentDetections.length === 0) return;
 
-  for (const faceLandmarks of currentDetections) {
-    for (const point of faceLandmarks) {
-      const x = point.x * width;
-      const y = point.y * height;
-      
-      ctx.beginPath();
-      ctx.arc(x, y, 1.5, 0, 2 * Math.PI);
-      ctx.fill();
+  currentDetections.forEach((landmarks, index) => {
+    const box = getBoundingBox(landmarks);
+    const x = box.minX * width;
+    const y = box.minY * height;
+    const w = box.width * width;
+    const h = box.height * height;
+    const pad = 12;
+
+    // Tactical Yellow Box
+    ctx.strokeStyle = '#ffee00';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x - pad, y - pad, w + pad * 2, h + pad * 2);
+
+    let smilePct = 0;
+    if (currentBlendshapes[index]) {
+      const cats = currentBlendshapes[index].categories;
+      const smileL = cats.find(c => c.categoryName === 'mouthSmileLeft')?.score || 0;
+      const smileR = cats.find(c => c.categoryName === 'mouthSmileRight')?.score || 0;
+      smilePct = Math.round(((smileL + smileR) / 2) * 100);
     }
-  }
+
+    // Data Label
+    ctx.fillStyle = 'rgba(255, 238, 0, 0.9)';
+    const labelY = (y - pad) + h + pad * 2;
+    ctx.fillRect(x - pad, labelY, w + pad * 2, 34);
+
+    ctx.fillStyle = '#000000';
+    ctx.font = 'bold 12px monospace';
+    ctx.fillText(`ID: TRGT-${index + 1}`, x - pad + 4, labelY + 14);
+    ctx.fillText(`SMILE: ${smilePct}%`, x - pad + 4, labelY + 28);
+  });
 }
 
 function detectLoop() {
@@ -241,16 +255,30 @@ function detectLoop() {
     rafId = requestAnimationFrame(detectLoop);
     return;
   }
-
   try {
     const result = faceLandmarker.detectForVideo(dom.video, performance.now());
     currentDetections = result.faceLandmarks || [];
+    currentBlendshapes = result.faceBlendshapes || [];
     drawFaces();
-  } catch (e) {
-    console.warn('AI detection failed:', e);
-  }
-
+  } catch (e) { console.warn('AI failed:', e); }
   rafId = requestAnimationFrame(detectLoop);
+}
+
+function pickFaceAtPoint(clientX, clientY) {
+  const rect = dom.wrap.getBoundingClientRect();
+  const tapX = clientX - rect.left;
+  const tapY = clientY - rect.top;
+
+  return currentDetections.find((landmarks) => {
+    const box = getBoundingBox(landmarks);
+    const bX = box.minX * rect.width;
+    const bY = box.minY * rect.height;
+    const bW = box.width * rect.width;
+    const bH = box.height * rect.height;
+    const pad = 30; // Highly forgiving tap area
+    return tapX >= (bX - pad) && tapX <= (bX + bW + pad) && 
+           tapY >= (bY - pad) && tapY <= (bY + bH + pad);
+  });
 }
 
 function captureFace(landmarks) {
@@ -263,12 +291,11 @@ function captureFace(landmarks) {
   source.height = vh;
   source.getContext('2d').drawImage(dom.video, 0, 0, vw, vh);
 
-  // Translate normalized 0..1 coordinates to actual video pixels
   const originX = box.minX * vw;
   const originY = box.minY * vh;
   const width = box.width * vw;
   const height = box.height * vh;
-  const pad = Math.max(vw, vh) * 0.08; // 8% padding around the face
+  const pad = Math.max(vw, vh) * 0.12; // Extra padding for a clean mugshot
 
   const x = Math.max(0, originX - pad);
   const y = Math.max(0, originY - pad);
@@ -280,32 +307,27 @@ function captureFace(landmarks) {
   crop.height = Math.max(1, Math.round(h));
   crop.getContext('2d').drawImage(source, x, y, w, h, 0, 0, crop.width, crop.height);
 
-  const dataUrl = crop.toDataURL('image/jpeg', 0.92);
   const captures = loadCaptures();
-  captures.unshift(dataUrl);
+  captures.unshift(crop.toDataURL('image/jpeg', 0.95));
   saveCaptures(captures.slice(0, 40));
   renderGallery();
 }
 
-function pickFaceAtPoint(clientX, clientY) {
-  const rect = dom.wrap.getBoundingClientRect();
-  const x = clientX - rect.left;
-  const y = clientY - rect.top;
-
-  return currentDetections.find((landmarks) => {
-    const box = getBoundingBox(landmarks);
-    const pX = box.minX * rect.width;
-    const pY = box.minY * rect.height;
-    const pW = box.width * rect.width;
-    const pH = box.height * rect.height;
-    
-    return x >= pX && x <= pX + pW && y >= pY && y <= pY + pH;
-  });
+function playShutterEffect() {
+  dom.wrap.style.transition = 'none';
+  dom.wrap.style.backgroundColor = '#ffffff';
+  dom.video.style.opacity = '0';
+  if (navigator.vibrate) navigator.vibrate(50);
+  setTimeout(() => {
+    dom.wrap.style.transition = 'background-color 0.3s ease-out';
+    dom.video.style.transition = 'opacity 0.3s ease-out';
+    dom.wrap.style.backgroundColor = '#000000';
+    dom.video.style.opacity = '1';
+  }, 50);
 }
 
 function handleIOSPhoto(file) {
   if (!file) return;
-
   const url = URL.createObjectURL(file);
   const img = new Image();
   img.onload = () => {
@@ -313,59 +335,37 @@ function handleIOSPhoto(file) {
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
     canvas.getContext('2d').drawImage(img, 0, 0);
-
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
     const captures = loadCaptures();
-    captures.unshift(dataUrl);
+    captures.unshift(canvas.toDataURL('image/jpeg', 0.95));
     saveCaptures(captures.slice(0, 40));
     renderGallery();
-
     URL.revokeObjectURL(url);
-    setStatus('photo captured (not live)');
   };
   img.src = url;
 }
 
-dom.startBtn.addEventListener('click', async () => {
-  try {
-    await startCamera();
-  } catch (error) {
-    console.error(error);
-    setStatus(`live failed: ${error?.name || 'Error'} / ${error?.message || error}`);
-    alert(
-      `Live Camera failed.\n\nName: ${error?.name || 'Unknown'}\nMessage: ${error?.message || error}\n\nTry:\n• Open in Safari (not IG/X/TikTok browser)\n• iOS Settings > Safari > Camera = Allow`
-    );
-  }
-});
-
-dom.flipBtn.addEventListener('click', async () => {
+dom.startBtn.addEventListener('click', startCamera);
+dom.flipBtn.addEventListener('click', () => {
   facingMode = facingMode === 'user' ? 'environment' : 'user';
-  try {
-    await startCamera();
-  } catch (error) {
-    console.error(error);
-    alert(`Unable to flip camera:\n${error?.name || ''}\n${error?.message || error}`);
-  }
+  startCamera();
 });
-
-dom.iosBtn.addEventListener('click', () => {
-  dom.iosCapture.click();
-});
-
+dom.iosBtn.addEventListener('click', () => dom.iosCapture.click());
 dom.iosCapture.addEventListener('change', (e) => {
-  const file = e.target.files?.[0];
-  handleIOSPhoto(file);
+  handleIOSPhoto(e.target.files?.[0]);
   e.target.value = '';
 });
-
 dom.clearBtn.addEventListener('click', () => {
   saveCaptures([]);
   renderGallery();
 });
+dom.saveAllBtn.addEventListener('click', saveAllToDevice);
 
 dom.overlay.addEventListener('click', (event) => {
   const hit = pickFaceAtPoint(event.clientX, event.clientY);
-  if (hit) captureFace(hit);
+  if (hit) {
+    playShutterEffect();
+    captureFace(hit);
+  }
 });
 
 window.addEventListener('resize', resizeOverlay);
