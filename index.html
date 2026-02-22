@@ -5,73 +5,52 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Tactical FaceSnap</title>
+  <title>Tactical HUD</title>
   <link rel="manifest" href="manifest.json" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header>
-    <h1>Tactical Face Tracker</h1>
-    <p>Live Crowd Scanner (Tap target to extract)</p>
-  </header>
+  
+  <div class="video-wrap" id="videoWrap">
+    <video id="camera" autoplay playsinline muted></video>
+    <canvas id="overlay"></canvas>
+  </div>
 
-  <main>
-    <section class="camera-card">
-      <div class="video-wrap" id="videoWrap">
-        <video id="camera" autoplay playsinline muted></video>
-        <canvas id="overlay"></canvas>
+  <div class="hud">
+    <header class="hud-top">
+      <div>
+        <h1>TACTICAL SCANNER</h1>
+        <p id="statusLine">Status: Offline</p>
       </div>
+      <button id="clearBtn" class="icon-btn" title="Clear All Data">🗑️</button>
+    </header>
 
-      <div class="controls">
-        <button id="startBtn">Start Scanner</button>
+    <div class="hud-bottom">
+      
+      <div class="actions-bar">
+        <button id="startBtn">Engage Scanner</button>
         <button id="flipBtn" disabled>Flip Cam</button>
-        <button id="iosBtn" class="ghost">iOS Photo Fallback</button>
+        <button id="iosBtn" class="ghost" style="display:none">Photo</button>
+        <button id="saveAllBtn" class="accent" style="display:none">Save All Extracted</button>
       </div>
 
-      <p class="hint" id="statusLine">Status: idle</p>
-
-      <input
-        id="iosCapture"
-        type="file"
-        accept="image/*"
-        capture="environment"
-        style="display:none"
-      />
-    </section>
-
-    <section class="gallery-card">
-      <div class="gallery-header">
-        <h2>Extracted Targets</h2>
-        <button id="saveAllBtn" class="accent">Save All</button>
-      </div>
-      <p class="hint">Saved temporarily in browser. Use Save All to export.</p>
+      <div id="gallery" class="floating-gallery"></div>
       
-      <div class="controls">
-        <button id="clearBtn" class="danger">Clear Data</button>
-      </div>
-      
-      <div id="gallery" class="gallery"></div>
-    </section>
-  </main>
+    </div>
+  </div>
+
+  <input id="iosCapture" type="file" accept="image/*" capture="environment" style="display:none" />
 
   <template id="captureTemplate">
     <article class="capture-item">
-      <img alt="Target snapshot" />
+      <img alt="Extracted target" />
       <div class="capture-actions">
-        <button data-action="save">Export</button>
-        <button data-action="delete" class="danger">Trash</button>
+        <button data-action="save">📥</button>
+        <button data-action="delete" class="danger">✖</button>
       </div>
     </article>
   </template>
 
   <script type="module" src="app.js"></script>
-  <script>
-    (async () => {
-      if ('serviceWorker' in navigator) {
-        const regs = await navigator.serviceWorker.getRegistrations();
-        for (const r of regs) await r.unregister();
-      }
-    })().catch(console.error);
-  </script>
 </body>
 </html>
