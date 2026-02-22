@@ -1,4 +1,4 @@
-const CACHE_NAME = 'facesnap-cache-v2';
+const CACHE_NAME = 'facesnap-cache-v3';
 const ASSETS = [
   './',
   './index.html',
@@ -24,7 +24,6 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // Network-first for page navigations so updates actually arrive on iPhone.
   if (req.mode === 'navigate') {
     event.respondWith((async () => {
       try {
@@ -40,12 +39,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Cache-first for same-origin static assets
   if (url.origin === location.origin) {
     event.respondWith(caches.match(req).then((cached) => cached || fetch(req)));
     return;
   }
 
-  // Don’t cache cross-origin assets (jsdelivr/googleapis/etc)
   event.respondWith(fetch(req));
 });
