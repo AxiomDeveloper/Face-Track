@@ -1,6 +1,6 @@
 import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm';
 
-const STORAGE_KEY = 'facesnap-tactical-v2';
+const STORAGE_KEY = 'facesnap-tactical-v3';
 
 const dom = {
   video: document.getElementById('camera'),
@@ -22,7 +22,7 @@ const ctx = dom.overlay.getContext('2d');
 let faceLandmarker;
 let stream;
 let running = false;
-let facingMode = 'environment'; // Default to back camera for crowds
+let facingMode = 'environment'; // Back camera for tactical crowd scanning
 let currentDetections = [];
 let currentBlendshapes = [];
 let rafId;
@@ -44,7 +44,7 @@ function renderGallery() {
   const captures = loadCaptures();
   dom.gallery.innerHTML = '';
   
-  dom.saveAllBtn.style.display = captures.length > 0 ? 'block' : 'none';
+  dom.saveAllBtn.style.display = captures.length > 0 ? 'flex' : 'none';
 
   captures.forEach((item, index) => {
     const node = dom.template.content.firstElementChild.cloneNode(true);
@@ -93,14 +93,12 @@ async function saveAllToDevice() {
   const files = captures.map((dataUrl, i) => dataUrlToFile(dataUrl, `target-${Date.now()}-${i}.jpg`));
   
   try {
-    // On iOS, this opens the share sheet allowing "Save X Images" to camera roll
     if (navigator.canShare && navigator.canShare({ files })) {
       await navigator.share({ files, title: 'Tactical Extraction' });
       return;
     }
   } catch (e) { console.log('Share API failed, falling back to individual downloads'); }
 
-  // Fallback for non-iOS
   files.forEach(file => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(file);
@@ -142,7 +140,7 @@ async function safeGetUserMedia(preferredFacingMode) {
 
 async function initDetector() {
   if (faceLandmarker) return;
-  setStatus('loading crowd AI…');
+  setStatus('Loading AI core...');
   const resolver = await FilesetResolver.forVisionTasks(
     'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm'
   );
@@ -153,9 +151,9 @@ async function initDetector() {
     },
     outputFaceBlendshapes: true,
     runningMode: 'VIDEO',
-    numFaces: 10 // Multi-target tracking
+    numFaces: 10 // Tracks up to 10 faces in crowd
   });
-  setStatus('AI ready');
+  setStatus('AI Ready');
 }
 
 async function startCamera() {
@@ -168,7 +166,7 @@ async function startCamera() {
   dom.video.muted = true;
   dom.video.autoplay = true;
 
-  setStatus('requesting camera…');
+  setStatus('Requesting optics...');
   stream = await safeGetUserMedia(facingMode);
   dom.video.srcObject = stream;
 
@@ -178,7 +176,7 @@ async function startCamera() {
   resizeOverlay();
   running = true;
   dom.flipBtn.disabled = false;
-  setStatus('Scanner Active: Tap yellow box to extract target.');
+  setStatus('Scanner Active: Tap box to extract target.');
   detectLoop();
 }
 
@@ -193,10 +191,17 @@ function stopCamera() {
 }
 
 function resizeOverlay() {
-  const rect = dom.wrap.getBoundingClientRect();
+  // Use exact window dimensions for the fullscreen HUD
+  const width = window.innerWidth;
+  const height = window.innerHeight;
   const dpr = window.devicePixelRatio || 1;
-  dom.overlay.width = Math.floor(rect.width * dpr);
-  dom.overlay.height = Math.floor(rect.height * dpr);
+  
+  dom.wrap.style.width = `${width}px`;
+  dom.wrap.style.height = `${height}px`;
+
+  dom.overlay.width = Math.floor(width * dpr);
+  dom.overlay.height = Math.floor(height * dpr);
+  
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
@@ -212,8 +217,8 @@ function getBoundingBox(landmarks) {
 }
 
 function drawFaces() {
-  const width = dom.wrap.clientWidth;
-  const height = dom.wrap.clientHeight;
+  const width = window.innerWidth;
+  const height = window.innerHeight;
   ctx.clearRect(0, 0, width, height);
   if (currentDetections.length === 0) return;
 
@@ -295,7 +300,7 @@ function captureFace(landmarks) {
   const originY = box.minY * vh;
   const width = box.width * vw;
   const height = box.height * vh;
-  const pad = Math.max(vw, vh) * 0.12; // Extra padding for a clean mugshot
+  const pad = Math.max(vw, vh) * 0.12;
 
   const x = Math.max(0, originX - pad);
   const y = Math.max(0, originY - pad);
@@ -372,4 +377,4 @@ window.addEventListener('resize', resizeOverlay);
 window.addEventListener('beforeunload', stopCamera);
 
 renderGallery();
-setStatus('ready');
+setStatus('Ready');
