@@ -1,6 +1,6 @@
 import { FaceLandmarker, FilesetResolver } from 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm';
 
-const STORAGE_KEY = 'facesnap-tactical-v3';
+const STORAGE_KEY = 'facesnap-tactical-v5';
 
 const dom = {
   video: document.getElementById('camera'),
@@ -22,7 +22,7 @@ const ctx = dom.overlay.getContext('2d');
 let faceLandmarker;
 let stream;
 let running = false;
-let facingMode = 'environment'; // Back camera for tactical crowd scanning
+let facingMode = 'environment';
 let currentDetections = [];
 let currentBlendshapes = [];
 let rafId;
@@ -151,7 +151,7 @@ async function initDetector() {
     },
     outputFaceBlendshapes: true,
     runningMode: 'VIDEO',
-    numFaces: 10 // Tracks up to 10 faces in crowd
+    numFaces: 10 
   });
   setStatus('AI Ready');
 }
@@ -191,7 +191,6 @@ function stopCamera() {
 }
 
 function resizeOverlay() {
-  // Use exact window dimensions for the fullscreen HUD
   const width = window.innerWidth;
   const height = window.innerHeight;
   const dpr = window.devicePixelRatio || 1;
@@ -220,6 +219,7 @@ function drawFaces() {
   const width = window.innerWidth;
   const height = window.innerHeight;
   ctx.clearRect(0, 0, width, height);
+  
   if (currentDetections.length === 0) return;
 
   currentDetections.forEach((landmarks, index) => {
@@ -235,23 +235,55 @@ function drawFaces() {
     ctx.lineWidth = 2;
     ctx.strokeRect(x - pad, y - pad, w + pad * 2, h + pad * 2);
 
-    let smilePct = 0;
+    // Bio-Telemetry Logic
+    let attnStatus = "LOCKED";
+    let vocalStatus = "SILENT";
+    let exprStatus = "NEUTRAL";
+
     if (currentBlendshapes[index]) {
       const cats = currentBlendshapes[index].categories;
-      const smileL = cats.find(c => c.categoryName === 'mouthSmileLeft')?.score || 0;
-      const smileR = cats.find(c => c.categoryName === 'mouthSmileRight')?.score || 0;
-      smilePct = Math.round(((smileL + smileR) / 2) * 100);
+      const getScore = (name) => cats.find(c => c.categoryName === name)?.score || 0;
+
+      // 1. Vocal / Jaw Status
+      const jawOpen = getScore('jawOpen');
+      if (jawOpen > 0.15) vocalStatus = "ACTIVE (TALKING)";
+
+      // 2. Expression Status
+      const smile = (getScore('mouthSmileLeft') + getScore('mouthSmileRight')) / 2;
+      const squint = (getScore('eyeSquintLeft') + getScore('eyeSquintRight')) / 2;
+
+      if (smile > 0.4) exprStatus = "SMILING";
+      else if (squint > 0.4) exprStatus = "SQUINTING";
+
+      // 3. Attention / Gaze
+      const blinkL = getScore('eyeBlinkLeft');
+      const blinkR = getScore('eyeBlinkRight');
+      
+      const lookingLeft = getScore('eyeLookOutLeft') + getScore('eyeLookInRight'); 
+      const lookingRight = getScore('eyeLookInLeft') + getScore('eyeLookOutRight');
+
+      if (blinkL > 0.5 && blinkR > 0.5) {
+        attnStatus = "EYES CLOSED";
+      } else if (lookingLeft > 0.6 || lookingRight > 0.6) {
+        attnStatus = "DISTRACTED";
+      }
     }
 
-    // Data Label
+    // HUD Label Drawing
     ctx.fillStyle = 'rgba(255, 238, 0, 0.9)';
     const labelY = (y - pad) + h + pad * 2;
-    ctx.fillRect(x - pad, labelY, w + pad * 2, 34);
+    
+    // Taller box to fit 4 lines of tactical data
+    ctx.fillRect(x - pad, labelY, w + pad * 2, 64);
 
     ctx.fillStyle = '#000000';
-    ctx.font = 'bold 12px monospace';
-    ctx.fillText(`ID: TRGT-${index + 1}`, x - pad + 4, labelY + 14);
-    ctx.fillText(`SMILE: ${smilePct}%`, x - pad + 4, labelY + 28);
+    ctx.font = 'bold 11px monospace';
+    
+    // Draw the data lines
+    ctx.fillText(`TRGT-${index + 1} // BIO-METRICS`, x - pad + 4, labelY + 14);
+    ctx.fillText(`ATTN:  ${attnStatus}`, x - pad + 4, labelY + 28);
+    ctx.fillText(`VOCAL: ${vocalStatus}`, x - pad + 4, labelY + 42);
+    ctx.fillText(`EXPR:  ${exprStatus}`, x - pad + 4, labelY + 56);
   });
 }
 
